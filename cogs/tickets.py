@@ -2,15 +2,16 @@ import io
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.db import DATA_DIR
+
 logger = logging.getLogger("discord_bot")
 
-CONFIG_PATH = Path("/app/data/ticket_config.json")
+CONFIG_PATH = DATA_DIR / "ticket_config.json"
 MAX_TICKETS_DEFAULT = 10
 
 

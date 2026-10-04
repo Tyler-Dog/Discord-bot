@@ -1,106 +1,82 @@
-# Python Discord Bot with Docker
+# Discord Bot
 
-This is a ready-to-run Discord bot built with `discord.py` and packaged for Docker.
+[![CI](https://github.com/Tyler-Dog/Discord-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Tyler-Dog/Discord-bot/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![discord.py](https://img.shields.io/badge/discord.py-2.6-5865F2)
+
+A modular, Docker-ready Discord bot built on `discord.py` with slash commands, a SQLite persistence layer, persistent UI components, background tasks and an optional Claude integration.
+
+![Rank card](docs/rank-card-preview.png)
 
 ## Features
 
-- Slash commands
-- Environment variable config
-- Logging
-- Dockerfile included
-- Docker Compose included
+| Module | What it does |
+| --- | --- |
+| 🤖 **AI** | `/ask` — chat with Claude from Discord (Anthropic Messages API, per-user cooldown, long answers auto-split) |
+| 📈 **Leveling** | XP for chatting (no message-content intent needed), `/rank` renders a **generated rank-card image** with Pillow, `/leaderboard` |
+| 🛡️ **Moderation** | `/warn` `/warnings` `/clearwarnings` `/kick` `/ban` `/timeout` `/untimeout` `/purge` with role-hierarchy safety checks and DM notices |
+| 📊 **Polls** | `/poll` with up to 5 options, live progress bars, change/remove your vote, optional auto-close. Buttons are **persistent** (`DynamicItem`) so polls keep working after restarts |
+| ⏰ **Reminders** | `/remind 2h30m take a break` — stored in SQLite, delivered in-channel (or by DM), survive restarts |
+| 🎫 **Tickets** | Button-based support tickets with HTML transcripts |
+| 👋 **Welcome** | Configurable welcome embeds |
+| 🎮 **ARC Raiders** | `/arcitem` `/arcweapon` `/arcsearch` `/arctraders` powered by the MetaForge API |
+| 🧰 **Utility** | `/botstats` `/avatar` `/serverinfo` `/userinfo` `/helpme` `/ping` `/hello` |
 
-## Commands
+Engineering touches: central slash-command error handler (cooldowns, missing permissions, logging), one-time command sync at startup, a shared async SQLite layer (`utils/db.py`), pure-function logic covered by pytest, and GitHub Actions CI (ruff + pytest).
 
-- `/ping`
-- `/hello`
-- `/helpme`
-- `/serverinfo`
-- `/userinfo`
-- `/say`
-- `/clear`
+## Setup
 
-## 1) Create your Discord application
-
-1. Go to the Discord Developer Portal.
-2. Create a **New Application**.
-3. Open the **Bot** tab and create a bot user.
-4. Under **Privileged Gateway Intents**, you can leave **Message Content Intent** off for this project.
-5. Copy your bot token.
-6. In **OAuth2 > URL Generator**, select:
-   - `bot`
-   - `applications.commands`
-7. In bot permissions, select at least:
-   - Send Messages
-   - Use Slash Commands
-   - Manage Messages (only if you want `/clear` to work)
-8. Open the generated invite URL and add the bot to your server.
-
-## 2) Set your environment variables
-
-Copy `.env.example` to `.env` and fill it in:
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), add a bot, and copy the token.
+2. Enable the **Server Members Intent** (needed for welcome messages). The Message Content intent is **not** required.
+3. Invite it with the `bot` and `applications.commands` scopes. Recommended permissions: Send Messages, Embed Links, Attach Files, Manage Channels, Manage Messages, Kick/Ban Members, Moderate Members.
+4. Copy the env template and fill it in:
 
 ```bash
 cp .env.example .env
 ```
 
-Example `.env`:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | yes | Bot token |
+| `GUILD_ID` | no | Sync commands instantly to one dev server |
+| `ANTHROPIC_API_KEY` | no | Enables `/ask` |
+| `ANTHROPIC_MODEL` | no | Override the Claude model used by `/ask` |
+| `DATA_DIR` | no | Where `bot.db` and config JSON live (default `./data`) |
 
-```env
-DISCORD_TOKEN=your_real_bot_token_here
-GUILD_ID=123456789012345678
-```
+## Run
 
-`GUILD_ID` is optional, but useful in development because guild command sync is faster than global sync.
-
-## 3) Run locally without Docker
+Locally:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Linux/macOS
-# .venv\Scripts\activate    # Windows PowerShell
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python bot.py
 ```
 
-## 4) Run with Docker
-
-Build and run:
-
-```bash
-docker compose up --build
-```
-
-Run in the background:
+With Docker:
 
 ```bash
 docker compose up -d --build
 ```
 
-Stop it:
+Data persists in `./data` (mounted into the container).
+
+## Development
 
 ```bash
-docker compose down
+pip install -r requirements-dev.txt
+ruff check .
+pytest
 ```
 
-## 5) Build and run without Compose
+## Project layout
 
-```bash
-docker build -t my-discord-bot .
-docker run --env-file .env --name my-discord-bot my-discord-bot
+```
+bot.py            entry point, error handler, extension loading
+cogs/             one file per feature module
+utils/db.py       async SQLite wrapper + schema
+utils/timeparse.py  "1h30m" -> seconds
+tests/            unit + cog smoke tests
 ```
 
-## 6) Deploy idea
-
-For a simple portfolio/demo setup, this project is enough to show:
-
-- you can build a Discord bot in Python
-- you know how to configure secrets with environment variables
-- you can containerize the bot with Docker
-- you can run the same app locally or inside a container
-
-## Notes
-
-- If `GUILD_ID` is set, commands sync to that server for quicker testing.
-- If `GUILD_ID` is not set, the bot syncs commands globally, which can take longer to appear.
-- Never commit your real `.env` file or token.
+Never commit your real `.env` file or token.

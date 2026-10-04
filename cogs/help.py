@@ -10,7 +10,13 @@ logger = logging.getLogger("discord_bot")
 COG_META = {
     "ArcRaiders": ("🎮 ARC Raiders", "Look up ARC Raiders game data"),
     "Welcome":    ("👋 Welcome",     "Server welcome message configuration"),
-    "Ticket":     ("🎫 Ticket",      "Setup the Ticket system"),
+    "Tickets":    ("🎫 Tickets",     "Support ticket system"),
+    "AI":         ("🤖 AI",          "Chat with Claude"),
+    "Leveling":   ("📈 Leveling",    "XP, rank cards and leaderboards"),
+    "Moderation": ("🛡️ Moderation",  "Warn, kick, ban, timeout, purge"),
+    "Polls":      ("📊 Polls",       "Live polls with buttons"),
+    "Reminders":  ("⏰ Reminders",   "Never forget anything"),
+    "Utility":    ("🧰 Utility",     "Stats and info commands"),
 }
 
 GENERAL_NAMES = {"ping", "hello", "helpme"}
@@ -89,7 +95,7 @@ class Help(commands.Cog):
             value="This bot is maintained by **tyler.0001**. For help, please message me!",
             inline=False,
         )
-        embed.set_footer(text="Bot is running discord.py 2.6.3")
+        embed.set_footer(text=f"Bot is running discord.py {discord.__version__}")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

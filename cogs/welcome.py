@@ -1,14 +1,15 @@
 import json
 import logging
-from pathlib import Path
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.db import DATA_DIR
+
 logger = logging.getLogger("discord_bot")
 
-CONFIG_PATH = Path("/app/data/welcome_config.json")
+CONFIG_PATH = DATA_DIR / "welcome_config.json"
 
 
 def load_config() -> dict:
