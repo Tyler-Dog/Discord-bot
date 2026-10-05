@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 import random
 import time
+from functools import lru_cache
 
 import discord
 from discord import app_commands
@@ -40,11 +42,48 @@ def level_from_xp(xp: int) -> tuple[int, int, int]:
 
 # ── Rank card rendering ──────────────────────────────────────────────────────
 
+FONT_CANDIDATES = (
+    os.getenv("RANK_FONT", ""),
+    "DejaVuSans.ttf",                                   # Linux/Docker (fonts-dejavu-core) and many systems
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "arial.ttf",                                        # Windows
+    "Arial.ttf",
+)
+
+
+@lru_cache(maxsize=16)
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    try:  # Pillow >= 10.1 ships a scalable default font
+    """A wide-coverage TrueType font if one is installed, else Pillow's tiny built-in font."""
+    for candidate in FONT_CANDIDATES:
+        if not candidate:
+            continue
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            continue
+    try:  # Pillow >= 10.1 ships a scalable default font (Latin only)
         return ImageFont.load_default(size=size)
     except TypeError:  # pragma: no cover - very old Pillow
         return ImageFont.load_default()
+
+
+def _glyph_signature(font, ch: str) -> bytes:
+    img = Image.new("L", (96, 96), 0)
+    ImageDraw.Draw(img).text((8, 8), ch, font=font, fill=255)
+    return img.tobytes()
+
+
+def clean_display_name(name: str, font) -> str:
+    """Drop characters the card font can't draw (emoji, scripts it lacks) so no empty boxes appear."""
+    missing = _glyph_signature(font, "\U0010FFFF")  # what this font draws for any unknown glyph
+
+    def drawable(ch: str) -> bool:
+        if ch in "\u200d\ufe0f":
+            return False
+        return ch.isspace() or _glyph_signature(font, ch) != missing
+
+    cleaned = "".join(ch for ch in name if drawable(ch))
+    return " ".join(cleaned.split()) or "Member"
 
 
 def render_rank_card(
@@ -84,7 +123,8 @@ def render_rank_card(
     img.paste(avatar, (50, 50), circle)
 
     # Text
-    draw.text((250, 52), name[:22], font=_font(40), fill=(255, 255, 255))
+    name_font = _font(40)
+    draw.text((250, 52), clean_display_name(name, name_font)[:22], font=name_font, fill=(255, 255, 255))
     draw.text((250, 105), f"RANK #{rank}", font=_font(26), fill=(180, 190, 255))
     draw.text((420, 105), f"LEVEL {level}", font=_font(26), fill=(120, 255, 190))
     draw.text((250, 140), f"{total_xp:,} total XP", font=_font(20), fill=(190, 190, 205))
