@@ -7,9 +7,32 @@
 A modular, Docker-ready Discord bot built on `discord.py`: slash commands, a SQLite persistence layer, persistent UI components, background tasks, a built-in web dashboard and a deep **Claude** integration (streaming, tool use, vision, structured output).
 
 <p align="center">
-  <img src="docs/dashboard-preview.png" alt="Web dashboard (sample data)" width="720"><br>
-  <sub>Built-in dashboard — preview rendered with sample data</sub>
+  <img src="docs/screenshots/dashboard-top.png" alt="Live web dashboard" width="760"><br>
+  <sub>The built-in web dashboard, live from the running bot (uptime, gateway latency, top commands)</sub>
 </p>
+
+## In action
+
+Real screenshots from the bot running in Discord.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/rank.png" alt="/rank card" width="420"><br><sub><code>/rank</code> — generated rank card</sub></td>
+    <td align="center"><img src="docs/screenshots/poll.png" alt="/poll" width="420"><br><sub><code>/poll</code> — live bars, persistent buttons, auto-close</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/tickets.png" alt="Ticket configuration" width="420"><br><sub><code>/ticketshow</code> — ticket system configuration</sub></td>
+    <td align="center"><img src="docs/screenshots/welcome.png" alt="Welcome message" width="420"><br><sub><code>/welcometest</code> — welcome embed preview</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/botstats.png" alt="/botstats" width="420"><br><sub><code>/botstats</code> — running in 16 servers</sub></td>
+    <td align="center"><img src="docs/screenshots/userinfo.png" alt="/userinfo" width="420"><br><sub><code>/userinfo</code></sub></td>
+  </tr>
+</table>
+
+**Per-server configuration with `/config`:**
+
+<p align="center"><img src="docs/screenshots/config.png" alt="/config commands" width="640"></p>
 
 ## Highlights
 
@@ -30,7 +53,7 @@ The API client (`utils/claude.py`) is a small hand-rolled SSE implementation wit
 - **AutoMod** (off by default) — spam bursts (auto-timeout), mass mentions, invite links and blocked words.
 - **Leveling** — XP for chatting (no message-content intent needed), `/rank` renders a **generated rank card** with Pillow, `/leaderboard`, and **role rewards** at configured levels.
 
-![Rank card](docs/rank-card-preview.png)
+![Rank card](docs/screenshots/rank.png)
 
 ### 🎮 Community features
 **Polls** (persistent `DynamicItem` buttons that survive restarts, live bars, auto-close) · **Reminders** (`/remind 2h30m ...`, stored in SQLite) · **Tickets** (modal intake, HTML transcripts) · **Welcome** embeds · **ARC Raiders** lookups (`/arcitem` `/arcweapon` `/arcsearch` `/arctraders`) · **Utility** (`/botstats` `/avatar` `/serverinfo` `/userinfo` `/helpme`).
