@@ -49,6 +49,56 @@ CREATE TABLE IF NOT EXISTS polls (
     closed     INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS guild_settings (
+    guild_id INTEGER NOT NULL,
+    key      TEXT    NOT NULL,
+    value    TEXT    NOT NULL,
+    PRIMARY KEY (guild_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS level_roles (
+    guild_id INTEGER NOT NULL,
+    level    INTEGER NOT NULL,
+    role_id  INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, level)
+);
+
+CREATE TABLE IF NOT EXISTS mod_cases (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id     INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    moderator_id INTEGER NOT NULL,
+    action       TEXT    NOT NULL,
+    reason       TEXT    NOT NULL,
+    created_at   REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cases_user ON mod_cases (guild_id, user_id);
+
+CREATE TABLE IF NOT EXISTS ai_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    role       TEXT    NOT NULL,           -- 'user' | 'assistant'
+    text       TEXT    NOT NULL,
+    created_at REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_history ON ai_history (channel_id, user_id, id);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+    user_id INTEGER NOT NULL,
+    day     TEXT    NOT NULL,
+    count   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS ticket_triage (
+    channel_id INTEGER PRIMARY KEY,
+    category   TEXT NOT NULL,
+    priority   TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    suggestion TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS poll_votes (
     message_id INTEGER NOT NULL,
     user_id    INTEGER NOT NULL,

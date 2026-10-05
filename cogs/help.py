@@ -17,6 +17,8 @@ COG_META = {
     "Polls":      ("📊 Polls",       "Live polls with buttons"),
     "Reminders":  ("⏰ Reminders",   "Never forget anything"),
     "Utility":    ("🧰 Utility",     "Stats and info commands"),
+    "Config":     ("⚙️ Config",      "Per-server settings (Manage Server)"),
+    "AutoMod":    ("🚨 AutoMod",     "Automatic spam / invite / word filtering"),
 }
 
 GENERAL_NAMES = {"ping", "hello", "helpme"}
@@ -74,14 +76,12 @@ class Help(commands.Cog):
                 cog_class, (f"📦 {cog_class}", "")
             )
 
-            # Get every app command belonging to this cog
-            cog_cmd_names = {c.name for c in cog.get_app_commands()}
-            lines = []
-            for name in sorted(cog_cmd_names):
-                cmd = all_cmds.get(name)
-                if cmd:
-                    lines.append(f"`/{cmd.name}` {cmd.description}")
-
+            # Every app command in this cog (subcommands of group cogs like /config included)
+            lines = [
+                f"`/{cmd.qualified_name}` {cmd.description}"
+                for cmd in sorted(cog.walk_app_commands(), key=lambda c: c.qualified_name)
+                if not isinstance(cmd, app_commands.Group)
+            ]
             if lines:
                 header = friendly_name
                 if description:

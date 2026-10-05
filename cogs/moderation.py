@@ -9,6 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.modlog import log_case
 from utils.timeparse import format_duration, parse_duration
 
 logger = logging.getLogger("discord_bot")
@@ -67,6 +68,8 @@ class Moderation(commands.Cog):
             "SELECT COUNT(*) AS n FROM warnings WHERE guild_id = ? AND user_id = ?",
             (interaction.guild_id, member.id),
         ))["n"]
+        await log_case(self.bot, interaction.guild, "warn", user_id=member.id, user_label=str(member),
+                       moderator_id=interaction.user.id, reason=reason)
         await dm_user(member, f"⚠️ You were warned in **{interaction.guild.name}**: {reason}")
         embed = discord.Embed(title="⚠️ Member warned", color=discord.Color.orange())
         embed.add_field(name="Member", value=member.mention)
@@ -108,6 +111,8 @@ class Moderation(commands.Cog):
         cur = await self.db.execute(
             "DELETE FROM warnings WHERE guild_id = ? AND user_id = ?", (interaction.guild_id, member.id)
         )
+        await log_case(self.bot, interaction.guild, "clearwarnings", user_id=member.id, user_label=str(member),
+                       moderator_id=interaction.user.id, reason=f"Cleared {cur.rowcount} warning(s)")
         await interaction.response.send_message(
             f"🧹 Removed {cur.rowcount} warning(s) from {member.mention}.", ephemeral=True
         )
@@ -124,6 +129,8 @@ class Moderation(commands.Cog):
             return
         await dm_user(member, f"👢 You were kicked from **{interaction.guild.name}**: {reason}")
         await member.kick(reason=f"{interaction.user}: {reason}")
+        await log_case(self.bot, interaction.guild, "kick", user_id=member.id, user_label=str(member),
+                       moderator_id=interaction.user.id, reason=reason)
         await interaction.response.send_message(f"👢 Kicked **{member}** — {reason}")
 
     @app_commands.command(name="ban", description="Ban a member.")
@@ -144,6 +151,8 @@ class Moderation(commands.Cog):
             return
         await dm_user(member, f"🔨 You were banned from **{interaction.guild.name}**: {reason}")
         await member.ban(reason=f"{interaction.user}: {reason}", delete_message_seconds=delete_days * 86400)
+        await log_case(self.bot, interaction.guild, "ban", user_id=member.id, user_label=str(member),
+                       moderator_id=interaction.user.id, reason=reason)
         await interaction.response.send_message(f"🔨 Banned **{member}** — {reason}")
 
     @app_commands.command(name="timeout", description="Time a member out, e.g. 10m, 2h, 1d.")
@@ -165,6 +174,8 @@ class Moderation(commands.Cog):
             )
             return
         await member.timeout(timedelta(seconds=seconds), reason=f"{interaction.user}: {reason}")
+        await log_case(self.bot, interaction.guild, "timeout", user_id=member.id, user_label=str(member),
+                       moderator_id=interaction.user.id, reason=f"{reason} ({format_duration(seconds)})")
         await interaction.response.send_message(
             f"🔇 Timed out **{member}** for **{format_duration(seconds)}** — {reason}"
         )
@@ -176,7 +187,29 @@ class Moderation(commands.Cog):
     @app_commands.guild_only()
     async def untimeout(self, interaction: discord.Interaction, member: discord.Member) -> None:
         await member.timeout(None, reason=f"Untimeout by {interaction.user}")
+        await log_case(self.bot, interaction.guild, "untimeout", user_id=member.id, user_label=str(member),
+                       moderator_id=interaction.user.id, reason="Timeout removed")
         await interaction.response.send_message(f"🔊 Removed timeout from **{member}**.")
+
+    @app_commands.command(name="cases", description="Show the moderation history (audit trail) for a member.")
+    @app_commands.default_permissions(moderate_members=True)
+    @app_commands.checks.has_permissions(moderate_members=True)
+    @app_commands.guild_only()
+    async def cases(self, interaction: discord.Interaction, member: discord.User) -> None:
+        rows = await self.db.fetchall(
+            "SELECT id, action, reason, moderator_id, created_at FROM mod_cases "
+            "WHERE guild_id = ? AND user_id = ? ORDER BY id DESC LIMIT 15",
+            (interaction.guild_id, member.id),
+        )
+        if not rows:
+            await interaction.response.send_message(f"No moderation history for {member.mention}.", ephemeral=True)
+            return
+        lines = [
+            f"`#{r['id']}` <t:{int(r['created_at'])}:d> **{r['action']}** by <@{r['moderator_id']}> — {r['reason'][:100]}"
+            for r in rows
+        ]
+        embed = discord.Embed(title=f"Cases for {member}", description="\n".join(lines)[:4000], color=discord.Color.blurple())
+        await interaction.response.send_message(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="purge", description="Bulk-delete recent messages in this channel.")
     @app_commands.describe(amount="How many messages to delete (1-100)", member="Only delete this member's messages")
@@ -193,6 +226,9 @@ class Moderation(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         check = (lambda m: m.author.id == member.id) if member else None
         deleted = await interaction.channel.purge(limit=amount, check=check)
+        await log_case(self.bot, interaction.guild, "purge", user_id=member.id if member else 0,
+                       user_label=str(member) if member else f"#{interaction.channel.name}",
+                       moderator_id=interaction.user.id, reason=f"Deleted {len(deleted)} message(s) in #{interaction.channel.name}")
         await interaction.followup.send(f"🧹 Deleted {len(deleted)} message(s).", ephemeral=True)
 
 

@@ -14,8 +14,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger("discord_bot")
 
-XP_COOLDOWN_SECONDS = 60
-XP_RANGE = (15, 25)
 
 
 # ── Pure maths (unit-tested) ─────────────────────────────────────────────────
@@ -118,16 +116,21 @@ class Leveling(commands.Cog):
             return
 
         db = self.bot.db  # type: ignore[attr-defined]
+        settings = self.bot.settings  # type: ignore[attr-defined]
+        gid = message.guild.id
+        if not await settings.module_enabled(gid, "leveling"):
+            return
         now = time.time()
         row = await db.fetchone(
             "SELECT xp, last_xp_at FROM levels WHERE guild_id = ? AND user_id = ?",
             (message.guild.id, message.author.id),
         )
         old_xp, last = (row["xp"], row["last_xp_at"]) if row else (0, 0.0)
-        if now - last < XP_COOLDOWN_SECONDS:
+        if now - last < await settings.get_int(gid, "xp_cooldown"):
             return
 
-        new_xp = old_xp + random.randint(*XP_RANGE)
+        lo, hi = await settings.get_int(gid, "xp_min"), await settings.get_int(gid, "xp_max")
+        new_xp = old_xp + random.randint(min(lo, hi), max(lo, hi))
         await db.execute(
             """INSERT INTO levels (guild_id, user_id, xp, last_xp_at) VALUES (?, ?, ?, ?)
                ON CONFLICT(guild_id, user_id) DO UPDATE SET xp = excluded.xp, last_xp_at = excluded.last_xp_at""",
@@ -137,13 +140,35 @@ class Leveling(commands.Cog):
         old_level = level_from_xp(old_xp)[0]
         new_level = level_from_xp(new_xp)[0]
         if new_level > old_level:
-            try:
-                await message.channel.send(
-                    f"🎉 {message.author.mention} just reached **level {new_level}**!",
-                    allowed_mentions=discord.AllowedMentions(users=[message.author]),
-                )
-            except discord.HTTPException:
-                logger.debug("Couldn't announce level-up in %s", message.channel.id)
+            earned = await self._apply_level_roles(message.author, new_level)
+            activity = getattr(self.bot, "activity_log", None)
+            if activity:
+                activity.add("level", f"{message.author.display_name} reached level {new_level}")
+            if await settings.get_bool(gid, "level_announce"):
+                text = f"🎉 {message.author.mention} just reached **level {new_level}**!"
+                if earned:
+                    text += " New role: " + ", ".join(f"**{r.name}**" for r in earned)
+                try:
+                    await message.channel.send(text, allowed_mentions=discord.AllowedMentions(users=[message.author]))
+                except discord.HTTPException:
+                    logger.debug("Couldn't announce level-up in %s", message.channel.id)
+
+    async def _apply_level_roles(self, member: discord.Member, level: int) -> list[discord.Role]:
+        """Grant every reward role at or below ``level`` that the member doesn't have yet."""
+        rows = await self.bot.db.fetchall(  # type: ignore[attr-defined]
+            "SELECT role_id FROM level_roles WHERE guild_id = ? AND level <= ?", (member.guild.id, level)
+        )
+        have = {r.id for r in member.roles}
+        roles = [member.guild.get_role(r["role_id"]) for r in rows if r["role_id"] not in have]
+        roles = [r for r in roles if r is not None and r < member.guild.me.top_role and not r.managed]
+        if not roles:
+            return []
+        try:
+            await member.add_roles(*roles, reason=f"Reached level {level}")
+        except discord.HTTPException:
+            logger.warning("Couldn't grant level roles to %s", member.id)
+            return []
+        return roles
 
     async def _rank_of(self, guild_id: int, user_id: int) -> tuple[int, int]:
         db = self.bot.db  # type: ignore[attr-defined]

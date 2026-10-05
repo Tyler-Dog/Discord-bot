@@ -1,0 +1,24 @@
+# Starter config for Fly.io. From the project root:
+#   fly launch --no-deploy -c deploy/fly.toml
+#   fly volumes create botdata --size 1
+#   fly secrets set DISCORD_TOKEN=... ANTHROPIC_API_KEY=...
+#   fly deploy -c deploy/fly.toml
+# (Full walkthrough: docs/HOSTING.md)
+app = "your-discord-bot"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DATA_DIR = "/app/data"
+  LOG_FORMAT = "json"
+
+[mounts]
+  source = "botdata"        # fly volumes create botdata --size 1
+  destination = "/app/data"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

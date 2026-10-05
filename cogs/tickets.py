@@ -1,3 +1,5 @@
+import asyncio
+import html
 import io
 import json
 import logging
@@ -8,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils.db import DATA_DIR
+from utils.triage import PRIORITY_EMOJI, triage_ticket
 
 logger = logging.getLogger("discord_bot")
 
@@ -39,7 +42,7 @@ def build_transcript(channel: discord.TextChannel, messages: list[discord.Messag
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Transcript — {channel.name}</title>
+<title>Transcript — {html.escape(channel.name)}</title>
 <style>
   body {{ font-family: Arial, sans-serif; background: #313338; color: #dbdee1; margin: 0; padding: 20px; }}
   h1 {{ color: #fff; border-bottom: 1px solid #3f4147; padding-bottom: 10px; }}
@@ -54,24 +57,24 @@ def build_transcript(channel: discord.TextChannel, messages: list[discord.Messag
 </style>
 </head>
 <body>
-<h1>📋 Transcript — #{channel.name}</h1>
+<h1>📋 Transcript — #{html.escape(channel.name)}</h1>
 <div class="meta">
-  Server: {channel.guild.name} &nbsp;|&nbsp;
-  Channel: #{channel.name} &nbsp;|&nbsp;
+  Server: {html.escape(channel.guild.name)} &nbsp;|&nbsp;
+  Channel: #{html.escape(channel.name)} &nbsp;|&nbsp;
   Exported: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")} &nbsp;|&nbsp;
   Messages: {len(messages)}
 </div>
 """]
 
     for msg in messages:
-        initial = (msg.author.display_name[0] if msg.author.display_name else "?").upper()
+        initial = html.escape((msg.author.display_name[0] if msg.author.display_name else "?").upper())
         bot_tag = '<span class="bot-tag">BOT</span>' if msg.author.bot else ""
         ts = msg.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        content = discord.utils.escape_mentions(msg.content) if msg.content else "<em>(no text content)</em>"
+        content = html.escape(msg.content) if msg.content else "<em>(no text content)</em>"
         lines.append(f"""<div class="message">
   <div class="avatar">{initial}</div>
   <div class="content">
-    <span class="author">{discord.utils.escape_mentions(msg.author.display_name)}</span>{bot_tag}
+    <span class="author">{html.escape(msg.author.display_name)}</span>{bot_tag}
     <span class="timestamp">{ts}</span>
     <div class="text">{content}</div>
   </div>
@@ -82,6 +85,93 @@ def build_transcript(channel: discord.TextChannel, messages: list[discord.Messag
 
 
 # ── Persistent Views ─────────────────────────────────────────────────────────
+
+class TicketModal(discord.ui.Modal, title="Open a ticket"):
+    subject = discord.ui.TextInput(label="Subject", max_length=100, placeholder="Short title for your issue")
+    description = discord.ui.TextInput(
+        label="What's going on?", style=discord.TextStyle.paragraph, max_length=1000,
+        placeholder="Give staff the details they need.",
+    )
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        await create_ticket(interaction, str(self.subject), str(self.description))
+
+
+def _open_channels(guild: discord.Guild, guild_cfg: dict, user_id: int) -> list[str]:
+    """The user's still-existing ticket channel ids (prunes manually deleted ones)."""
+    open_tickets: dict = guild_cfg.setdefault("open_tickets", {})
+    channels = open_tickets.get(str(user_id), [])
+    valid = [cid for cid in channels if guild.get_channel(int(cid)) is not None]
+    if len(valid) != len(channels):
+        open_tickets[str(user_id)] = valid
+    return valid
+
+
+async def create_ticket(interaction: discord.Interaction, subject: str, description: str) -> None:
+    guild = interaction.guild
+    member = interaction.user
+
+    config = load_config()
+    guild_cfg = get_guild_cfg(config, guild.id)
+    category_id = guild_cfg.get("category_id")
+    support_role_ids = guild_cfg.get("support_role_ids", [])
+    max_tickets = guild_cfg.get("max_tickets_per_user", MAX_TICKETS_DEFAULT)
+
+    user_channels = _open_channels(guild, guild_cfg, member.id)
+    if len(user_channels) >= max_tickets:
+        await interaction.followup.send(f"You already have {len(user_channels)} open ticket(s) (max {max_tickets}).", ephemeral=True)
+        return
+
+    category = guild.get_channel(int(category_id)) if category_id else None
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        member: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, embed_links=True),
+        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_messages=True),
+    }
+    for role_id in support_role_ids:
+        role = guild.get_role(int(role_id))
+        if role:
+            overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_messages=True)
+
+    ticket_number = guild_cfg.get("ticket_count", 0) + 1
+    guild_cfg["ticket_count"] = ticket_number
+    channel_name = f"ticket-{ticket_number:04d}-{member.name}"
+
+    channel = await guild.create_text_channel(
+        name=channel_name,
+        category=category,
+        overwrites=overwrites,
+        topic=f"Ticket by {member} ({member.id}) | Opened {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+    )
+
+    user_channels.append(str(channel.id))
+    guild_cfg["open_tickets"][str(member.id)] = user_channels
+    save_config(config)
+
+    embed = discord.Embed(
+        title=f"🎫 Ticket #{ticket_number:04d} — {subject}",
+        description=(
+            f"Welcome {member.mention}! Staff will be with you shortly.\n\n"
+            f"**Your message**\n{description}\n\n"
+            "When your issue is resolved, click **Close Ticket** below."
+        ),
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_footer(text=f"Opened by {member.display_name}")
+    await channel.send(content=member.mention, embed=embed, view=CloseTicketView())
+    await interaction.followup.send(f"Your ticket has been created: {channel.mention}", ephemeral=True)
+    logger.info("Ticket %s created by %s (%s)", channel_name, member, member.id)
+
+    activity = getattr(interaction.client, "activity_log", None)
+    if activity:
+        activity.add("ticket", f"{member.display_name} opened ticket #{ticket_number:04d}")
+
+    cog = interaction.client.get_cog("Tickets")
+    if cog is not None:
+        asyncio.create_task(cog.run_triage(channel, subject, description))
+
 
 class OpenTicketView(discord.ui.View):
     def __init__(self) -> None:
@@ -94,93 +184,44 @@ class OpenTicketView(discord.ui.View):
     )
     async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         guild = interaction.guild
-        member = interaction.user
-
-        # Always read fresh from disk so we have current state
         config = load_config()
         guild_cfg = get_guild_cfg(config, guild.id)
-
-        category_id = guild_cfg.get("category_id")
-        support_role_ids = guild_cfg.get("support_role_ids", [])
         max_tickets = guild_cfg.get("max_tickets_per_user", MAX_TICKETS_DEFAULT)
 
-        # open_tickets is now a dict of user_id -> [channel_id, channel_id, ...]
-        open_tickets: dict = guild_cfg.setdefault("open_tickets", {})
-        user_key = str(member.id)
-        user_channels: list = open_tickets.get(user_key, [])
-
-        # Clean up any channels that were manually deleted
-        valid_channels = [cid for cid in user_channels if guild.get_channel(int(cid)) is not None]
-        if len(valid_channels) != len(user_channels):
-            open_tickets[user_key] = valid_channels
-            user_channels = valid_channels
-            save_config(config)
-
-        # Enforce per-user limit
+        user_channels = _open_channels(guild, guild_cfg, interaction.user.id)
+        save_config(config)
         if len(user_channels) >= max_tickets:
-            mentions = " ".join(
-                guild.get_channel(int(cid)).mention
-                for cid in user_channels
-                if guild.get_channel(int(cid))
-            )
+            mentions = " ".join(f"<#{cid}>" for cid in user_channels)
             await interaction.response.send_message(
                 f"You already have {len(user_channels)} open ticket(s) (max {max_tickets}):\n{mentions}",
                 ephemeral=True,
             )
             return
+        await interaction.response.send_modal(TicketModal())
 
-        category = guild.get_channel(int(category_id)) if category_id else None
 
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            member: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, attach_files=True, embed_links=True
-            ),
-            guild.me: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, manage_channels=True, manage_messages=True
-            ),
-        }
-        for role_id in support_role_ids:
-            role = guild.get_role(int(role_id))
-            if role:
-                overwrites[role] = discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, manage_messages=True
-                )
+class TriageView(discord.ui.View):
+    """Persistent button that reveals Claude's suggested reply to staff only (ephemeral)."""
 
-        ticket_number = guild_cfg.get("ticket_count", 0) + 1
-        guild_cfg["ticket_count"] = ticket_number
-        channel_name = f"ticket-{ticket_number:04d}-{member.name}"
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
 
-        channel = await guild.create_text_channel(
-            name=channel_name,
-            category=category,
-            overwrites=overwrites,
-            topic=f"Ticket by {member} ({member.id}) | Opened {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+    @discord.ui.button(label="💡 Suggested reply (staff)", style=discord.ButtonStyle.secondary, custom_id="ticket:suggest")
+    async def suggest(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        guild_cfg = get_guild_cfg(load_config(), interaction.guild_id)
+        support_ids = {int(r) for r in guild_cfg.get("support_role_ids", [])}
+        member = interaction.user
+        is_staff = member.guild_permissions.manage_channels or any(r.id in support_ids for r in member.roles)
+        if not is_staff:
+            await interaction.response.send_message("Only staff can view this.", ephemeral=True)
+            return
+        row = await interaction.client.db.fetchone(
+            "SELECT suggestion FROM ticket_triage WHERE channel_id = ?", (interaction.channel_id,)
         )
-
-        # Add to user's list of open tickets
-        user_channels.append(str(channel.id))
-        open_tickets[user_key] = user_channels
-        guild_cfg["open_tickets"] = open_tickets
-        save_config(config)
-
-        embed = discord.Embed(
-            title=f"🎫 Ticket #{ticket_number:04d}",
-            description=(
-                f"Welcome {member.mention}!\n\n"
-                "Please describe your issue and a staff member will be with you shortly.\n\n"
-                "When your issue is resolved, click **Close Ticket** below."
-            ),
-            color=discord.Color.green(),
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.set_footer(text=f"Opened by {member.display_name}")
-
-        await channel.send(content=member.mention, embed=embed, view=CloseTicketView())
-        await interaction.response.send_message(
-            f"Your ticket has been created: {channel.mention}", ephemeral=True
-        )
-        logger.info("Ticket %s created by %s (%s)", channel_name, member, member.id)
+        if row is None:
+            await interaction.response.send_message("No suggestion stored for this ticket.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"**Suggested reply** (review before sending):\n\n{row['suggestion']}", ephemeral=True)
 
 
 class CloseTicketView(discord.ui.View):
@@ -240,6 +281,7 @@ class CloseTicketView(discord.ui.View):
         guild_cfg["open_tickets"] = open_tickets
         save_config(config)
 
+        await interaction.client.db.execute("DELETE FROM ticket_triage WHERE channel_id = ?", (channel.id,))
         logger.info("Ticket %s closed by %s (%s)", channel.name, interaction.user, interaction.user.id)
         await channel.delete(reason=f"Ticket closed by {interaction.user}")
 
@@ -251,6 +293,26 @@ class Tickets(commands.Cog):
         self.bot = bot
         bot.add_view(OpenTicketView())
         bot.add_view(CloseTicketView())
+        bot.add_view(TriageView())
+
+    async def run_triage(self, channel: discord.TextChannel, subject: str, description: str) -> None:
+        """Ask Claude to categorise the ticket and post the result (no-op without an API key)."""
+        client = getattr(self.bot, "claude", None)
+        if client is None or not client.enabled or not await self.bot.settings.module_enabled(channel.guild.id, "ai"):
+            return
+        try:
+            result = await triage_ticket(client, subject, description)
+            await self.bot.db.execute(
+                "INSERT OR REPLACE INTO ticket_triage (channel_id, category, priority, summary, suggestion) VALUES (?, ?, ?, ?, ?)",
+                (channel.id, result["category"], result["priority"], result["summary"], result["suggestion"]),
+            )
+            embed = discord.Embed(title="🤖 AI triage", description=result["summary"], color=discord.Color.from_str("#D97757"))
+            embed.add_field(name="Category", value=result["category"].title())
+            embed.add_field(name="Priority", value=f"{PRIORITY_EMOJI[result['priority']]} {result['priority'].title()}")
+            embed.set_footer(text="Automated suggestion — staff should verify")
+            await channel.send(embed=embed, view=TriageView())
+        except Exception:
+            logger.exception("Ticket triage failed for %s", channel.id)
 
     @app_commands.command(
         name="ticketsetup",

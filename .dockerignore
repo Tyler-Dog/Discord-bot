@@ -7,3 +7,11 @@ __pycache__
 .gitignore
 venv
 .venv
+.pytest_cache
+.ruff_cache
+tests
+docs
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/.heartbeat

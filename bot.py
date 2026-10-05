@@ -6,23 +6,26 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from utils.activity import ActivityLog
+from utils.claude import ClaudeClient
 from utils.db import Database
+from utils.logging_setup import setup_logging
+from utils.settings import BotTree, Settings
 
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+setup_logging()
 logger = logging.getLogger("discord_bot")
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True  # privileged: needed for welcome messages and member lookups
-intents.message_content = False  # not needed — XP only counts messages, never reads them
+# Privileged and OFF by default. Required only for /summarize and AutoMod's invite/word filters.
+# Enable it in the Developer Portal first, then set MESSAGE_CONTENT_INTENT=true.
+intents.message_content = os.getenv("MESSAGE_CONTENT_INTENT", "false").lower() in ("1", "true", "yes")
 
 EXTENSIONS = (
     "cogs.arc_raiders",
@@ -32,21 +35,33 @@ EXTENSIONS = (
     "cogs.ai",
     "cogs.leveling",
     "cogs.moderation",
+    "cogs.automod",
+    "cogs.config",
     "cogs.polls",
     "cogs.reminders",
     "cogs.utility",
+    "cogs.dashboard",
+    "cogs.health",
 )
 
 
 class MyBot(commands.Bot):
     db: Database
+    settings: Settings
+    claude: ClaudeClient
+    activity_log: ActivityLog
 
     def __init__(self) -> None:
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, tree_cls=BotTree)
         self.tree.on_error = self.on_app_command_error
+        self.activity_log = ActivityLog()
+        self.claude = ClaudeClient.from_env()
 
     async def setup_hook(self) -> None:
         self.db = await Database.open()
+        self.settings = Settings(self.db)
+        if not self.claude.enabled:
+            logger.warning("ANTHROPIC_API_KEY not set — AI features (/ask, /summarize, ticket triage) are disabled.")
         for ext in EXTENSIONS:
             try:
                 await self.load_extension(ext)
@@ -69,6 +84,7 @@ class MyBot(commands.Bot):
 
     async def close(self) -> None:
         await super().close()
+        await self.claude.close()
         await self.db.close()
 
     async def on_ready(self) -> None:
@@ -78,6 +94,11 @@ class MyBot(commands.Bot):
         await self.change_presence(
             status=discord.Status.online, activity=discord.Game(name="/helpme for commands")
         )
+
+    async def on_app_command_completion(self, interaction: discord.Interaction, command) -> None:
+        self.activity_log.command(command.qualified_name)
+        where = interaction.guild.name if interaction.guild else "DM"
+        self.activity_log.add("command", f"{interaction.user.display_name} used /{command.qualified_name} in {where}")
 
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
@@ -92,6 +113,10 @@ class MyBot(commands.Bot):
             msg = f"🚫 I'm missing permissions: **{missing}**."
         elif isinstance(error, app_commands.NoPrivateMessage):
             msg = "This command only works in a server."
+        elif isinstance(error, app_commands.CheckFailure):
+            if interaction.response.is_done():
+                return  # a check (e.g. a disabled module) already answered
+            msg = "🚫 You can't use that command here."
         else:
             logger.exception("Unhandled error in /%s", getattr(interaction.command, "name", "?"), exc_info=error)
             msg = "💥 Something went wrong. It's been logged."

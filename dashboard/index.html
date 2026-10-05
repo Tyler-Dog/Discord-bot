@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bot Dashboard</title>
+<style>
+  :root {
+    --bg: #f5f6fa; --card: #ffffff; --text: #1c1e2b; --muted: #6b7088; --line: #e4e6ef;
+    --accent: #5865f2; --good: #1f9d63; --bad: #d64545; --bar: #dfe2fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14151f; --card: #1d1f2e; --text: #eceefb; --muted: #959ab5; --line: #2b2e44;
+            --accent: #7b86ff; --good: #3ecf8e; --bad: #ff6b6b; --bar: #2b2f55; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--good); box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 25%, transparent); }
+  .grid { display: grid; gap: 14px; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 14px; }
+  .two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .big { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  canvas { width: 100%; height: 150px; display: block; }
+  .row { display: grid; grid-template-columns: 110px 1fr 40px; align-items: center; gap: 10px; margin: 6px 0; font-size: 14px; }
+  .row .track { display: block; background: var(--bar); border-radius: 6px; height: 10px; overflow: hidden; }
+  .row .fill { display: block; background: var(--accent); height: 100%; border-radius: 6px; transition: width .4s; }
+  .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 7px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font: inherit; max-width: 100%; }
+  ul.feed { list-style: none; margin: 0; padding: 0; max-height: 330px; overflow: auto; }
+  ul.feed li { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  ul.feed time { color: var(--muted); font-size: 12px; white-space: nowrap; min-width: 64px; padding-top: 2px; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--bar); color: var(--accent); height: fit-content; text-transform: uppercase; letter-spacing: .04em; }
+  .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+  footer { margin-top: 18px; color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🤖 Bot Dashboard</h1>
+    <span class="status"><span class="dot" id="dot"></span><span id="status">connecting…</span></span>
+  </header>
+
+  <section class="grid stats">
+    <div class="card"><h2>Uptime</h2><div class="big" id="uptime">–</div></div>
+    <div class="card"><h2>Latency</h2><div class="big" id="latency">–</div></div>
+    <div class="card"><h2>Servers</h2><div class="big" id="guilds">–</div><div class="sub" id="members"></div></div>
+    <div class="card"><h2>Commands run</h2><div class="big" id="cmds">–</div></div>
+    <div class="card"><h2>AI asks today</h2><div class="big" id="ai">–</div><div class="sub" id="model"></div></div>
+  </section>
+
+  <section class="grid two">
+    <div class="card"><h2>Gateway latency (ms)</h2><canvas id="spark" width="700" height="260"></canvas><div class="sub" id="sparkNote"></div></div>
+    <div class="card"><h2>Top commands</h2><div id="top"></div></div>
+  </section>
+
+  <section class="grid two">
+    <div class="card">
+      <h2>Leaderboard</h2>
+      <p style="margin:0 0 8px"><select id="guildSel" aria-label="Server"></select></p>
+      <table><thead><tr><th>#</th><th>Member</th><th class="r">Level</th><th class="r">XP</th></tr></thead><tbody id="lb"></tbody></table>
+    </div>
+    <div class="card"><h2>Recent activity</h2><ul class="feed" id="feed"></ul></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+const token = new URLSearchParams(location.search).get('token');
+const headers = token ? { Authorization: 'Bearer ' + token } : {};
+const $ = (id) => document.getElementById(id);
+let selectedGuild = null;
+
+async function api(path) {
+  const r = await fetch(path, { headers });
+  if (!r.ok) throw new Error(r.status === 401 ? 'unauthorized (add ?token=…)' : 'HTTP ' + r.status);
+  return r.json();
+}
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+}
+function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+function cell(tag, text, cls) { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; return e; }
+
+function drawSpark(values) {
+  const c = $('spark'), g = c.getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  g.clearRect(0, 0, c.width, c.height);
+  if (values.length < 2) { $('sparkNote').textContent = 'Collecting samples…'; return; }
+  const max = Math.max(...values) * 1.15 || 1, min = Math.min(...values) * 0.85;
+  const x = (i) => i / (values.length - 1) * (c.width - 8) + 4;
+  const y = (v) => c.height - 8 - (v - min) / (max - min || 1) * (c.height - 16);
+  g.lineWidth = 3; g.lineJoin = 'round'; g.strokeStyle = css.getPropertyValue('--accent').trim();
+  g.beginPath(); values.forEach((v, i) => i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v))); g.stroke();
+  $('sparkNote').textContent = `min ${Math.min(...values)} · avg ${Math.round(values.reduce((a, b) => a + b, 0) / values.length)} · max ${Math.max(...values)} ms`;
+}
+
+function renderTop(list) {
+  const box = $('top'); clear(box);
+  if (!list.length) { box.appendChild(cell('div', 'No commands used yet.', 'empty')); return; }
+  const max = list[0][1];
+  for (const [name, n] of list) {
+    const row = document.createElement('div'); row.className = 'row';
+    row.appendChild(cell('span', '/' + name, 'name'));
+    const track = document.createElement('span'); track.className = 'track';
+    const fill = document.createElement('span'); fill.className = 'fill'; fill.style.width = (n / max * 100) + '%';
+    track.appendChild(fill); row.appendChild(track); row.appendChild(cell('span', n, 'num'));
+    box.appendChild(row);
+  }
+}
+
+async function loadLeaderboard() {
+  if (!selectedGuild) return;
+  const body = $('lb'); clear(body);
+  try {
+    const rows = await api('/api/leaderboard?guild=' + selectedGuild);
+    if (!rows.length) { const tr = document.createElement('tr'); const td = cell('td', 'No XP earned yet.', 'empty'); td.colSpan = 4; tr.appendChild(td); body.appendChild(tr); return; }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.append(cell('td', r.rank), cell('td', r.name), cell('td', r.level, 'r'), cell('td', r.xp.toLocaleString(), 'r'));
+      body.appendChild(tr);
+    }
+  } catch (e) { /* leaderboard is best-effort */ }
+}
+
+async function loadActivity() {
+  const feed = $('feed'); clear(feed);
+  const events = await api('/api/activity');
+  if (!events.length) { const li = document.createElement('li'); li.appendChild(cell('span', 'Nothing yet — try a slash command.', 'empty')); feed.appendChild(li); return; }
+  for (const e of events) {
+    const li = document.createElement('li');
+    li.append(cell('time', new Date(e.ts * 1000).toLocaleTimeString()), cell('span', e.kind, 'tag'), cell('span', e.text));
+    feed.appendChild(li);
+  }
+}
+
+async function refresh() {
+  try {
+    const s = await api('/api/stats');
+    $('dot').classList.add('on'); $('status').textContent = 'online';
+    $('uptime').textContent = fmtUptime(s.uptime);
+    $('latency').textContent = s.latency_ms == null ? '–' : s.latency_ms + ' ms';
+    $('guilds').textContent = s.guilds.length;
+    $('members').textContent = s.members.toLocaleString() + ' members';
+    $('cmds').textContent = s.commands_total.toLocaleString();
+    $('ai').textContent = s.ai_requests_today;
+    $('model').textContent = s.ai_model || 'AI disabled';
+    drawSpark(s.latency_history);
+    renderTop(s.top_commands);
+    $('foot').textContent = `Python ${s.python} · discord.py ${s.discord_py} · modules: ${s.cogs.join(', ')}`;
+
+    const sel = $('guildSel');
+    if (sel.options.length !== s.guilds.length) {
+      clear(sel);
+      for (const g of s.guilds) { const o = document.createElement('option'); o.value = g.id; o.textContent = g.name; sel.appendChild(o); }
+      selectedGuild = selectedGuild || (s.guilds[0] && s.guilds[0].id);
+      if (selectedGuild) sel.value = selectedGuild;
+    }
+    await Promise.all([loadLeaderboard(), loadActivity()]);
+  } catch (e) {
+    $('dot').classList.remove('on'); $('status').textContent = e.message;
+  }
+}
+$('guildSel').addEventListener('change', (e) => { selectedGuild = e.target.value; loadLeaderboard(); });
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
